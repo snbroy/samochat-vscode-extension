@@ -1,0 +1,6 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none">
+  <path d="M4 5.5A2.5 2.5 0 0 1 6.5 3h11A2.5 2.5 0 0 1 20 5.5v8A2.5 2.5 0 0 1 17.5 16H10l-4.5 4v-4H6.5A2.5 2.5 0 0 1 4 13.5v-8Z" fill="currentColor" fill-opacity="0.85"/>
+  <circle cx="9" cy="9.5" r="1.1" fill="var(--vscode-sideBar-background, #1e1e1e)"/>
+  <circle cx="12.5" cy="9.5" r="1.1" fill="var(--vscode-sideBar-background, #1e1e1e)"/>
+  <circle cx="16" cy="9.5" r="1.1" fill="var(--vscode-sideBar-background, #1e1e1e)"/>
+</svg>

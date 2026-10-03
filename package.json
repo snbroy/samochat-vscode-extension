@@ -1,0 +1,127 @@
+{
+  "name": "samo-chat",
+  "displayName": "SaMo Chat",
+  "description": "SaMo is your AI-powered Shopify engineering assistant, right inside VS Code. Ask Shopify platform questions, get architecture and code guidance, and chat in a familiar ChatGPT/Copilot-style panel — developed by Sanjib Roy.",
+  "version": "0.1.8",
+  "publisher": "devsanjib",
+  "author": {
+    "name": "Sanjib Roy"
+  },
+  "license": "SEE LICENSE IN LICENSE",
+  "engines": {
+    "vscode": "^1.85.0"
+  },
+  "categories": [
+    "Chat",
+    "Machine Learning",
+    "Other"
+  ],
+  "keywords": [
+    "samo",
+    "shopify",
+    "chat",
+    "ai",
+    "assistant",
+    "chatgpt",
+    "copilot"
+  ],
+  "icon": "media/icon.png",
+  "galleryBanner": {
+    "color": "#0B0B12",
+    "theme": "dark"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/snbroy/Samo-AI.git",
+    "directory": "vscode-extension"
+  },
+  "bugs": {
+    "url": "https://github.com/snbroy/Samo-AI/issues"
+  },
+  "homepage": "https://github.com/snbroy/Samo-AI/tree/main/vscode-extension#readme",
+  "activationEvents": [],
+  "main": "./dist/extension.js",
+  "contributes": {
+    "commands": [
+      {
+        "command": "samo.openChat",
+        "title": "SaMo: Open Chat",
+        "icon": "$(comment-discussion)"
+      },
+      {
+        "command": "samo.clearChat",
+        "title": "SaMo: Clear Chat History"
+      },
+      {
+        "command": "samo.setAccessToken",
+        "title": "SaMo: Set Access Token"
+      }
+    ],
+    "viewsContainers": {
+      "activitybar": [
+        {
+          "id": "samo-chat-container",
+          "title": "SaMo",
+          "icon": "media/activity-icon.svg"
+        }
+      ]
+    },
+    "views": {
+      "samo-chat-container": [
+        {
+          "type": "webview",
+          "id": "samo.chatView",
+          "name": "Chat",
+          "icon": "media/activity-icon.svg"
+        }
+      ]
+    },
+    "menus": {
+      "view/title": [
+        {
+          "command": "samo.clearChat",
+          "when": "view == samo.chatView",
+          "group": "navigation"
+        }
+      ]
+    },
+    "configuration": {
+      "title": "SaMo Chat",
+      "properties": {
+        "samo.apiUrl": {
+          "type": "string",
+          "default": "",
+          "description": "Base URL of the deployed SaMo API (for example https://your-railway-domain). Required before chatting."
+        },
+        "samo.email": {
+          "type": "string",
+          "default": "",
+          "description": "Email address sent with each chat request, as required by the SaMo API."
+        },
+        "samo.requestTimeoutSeconds": {
+          "type": "integer",
+          "default": 120,
+          "minimum": 15,
+          "maximum": 300,
+          "description": "Maximum time without response data before a SaMo request is stopped."
+        }
+      }
+    }
+  },
+  "scripts": {
+    "vscode:prepublish": "npm run build",
+    "build": "node esbuild.js --production",
+    "watch": "node esbuild.js --watch",
+    "test": "tsc --outDir out --sourceMap false && node --test test/*.test.js",
+    "package": "vsce package",
+    "publish": "vsce publish"
+  },
+  "devDependencies": {
+    "@types/node": "^20.11.0",
+    "@types/vscode": "^1.85.0",
+    "@vscode/vsce": "^2.32.0",
+    "esbuild": "^0.20.0",
+    "markdown-it": "^15.0.2",
+    "typescript": "^5.4.0"
+  }
+}
