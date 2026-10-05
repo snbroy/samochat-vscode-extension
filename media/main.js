@@ -116,6 +116,44 @@
         }
       }
 
+      if (message.role === "assistant" && message.changeSet) {
+        const cs = message.changeSet;
+        const makeBtn = (label, cls, type) => {
+          const btn = document.createElement("button");
+          btn.type = "button";
+          btn.className = `fix-btn ${cls}`;
+          btn.textContent = label;
+          btn.disabled = thinking;
+          btn.addEventListener("click", () => vscode.postMessage({ type, id: cs.id }));
+          return btn;
+        };
+        if (cs.status === "applied") {
+          const actions = document.createElement("div");
+          actions.className = "fix-actions";
+          actions.appendChild(makeBtn("Undo", "keep", "undoChangeSet"));
+          actions.appendChild(makeBtn("Keep changes", "apply", "keepChangeSet"));
+          row.appendChild(actions);
+        } else if (cs.status === "kept") {
+          const actions = document.createElement("div");
+          actions.className = "fix-actions";
+          if (cs.prUrl) {
+            const state = document.createElement("div");
+            state.className = "fix-state";
+            state.textContent = "Changes kept. Pull request created.";
+            actions.appendChild(state);
+          } else {
+            actions.appendChild(makeBtn("Review changes", "keep", "reviewChanges"));
+            actions.appendChild(makeBtn("Create PR", "apply", "createPr"));
+          }
+          row.appendChild(actions);
+        } else if (cs.status === "undone") {
+          const state = document.createElement("div");
+          state.className = "fix-state";
+          state.textContent = "Changes undone.";
+          row.appendChild(state);
+        }
+      }
+
       messagesEl.appendChild(row);
     });
 

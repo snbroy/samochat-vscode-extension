@@ -2,7 +2,7 @@
   "name": "samo-chat",
   "displayName": "SaMo Chat",
   "description": "SaMo is your AI-powered Shopify engineering assistant, right inside VS Code. Ask Shopify platform questions, get architecture and code guidance, and chat in a familiar ChatGPT/Copilot-style panel — developed by Sanjib Roy.",
-  "version": "0.1.8",
+  "version": "0.2.0",
   "publisher": "devsanjib",
   "author": {
     "name": "Sanjib Roy"
@@ -104,6 +104,25 @@
           "minimum": 15,
           "maximum": 300,
           "description": "Maximum time without response data before a SaMo request is stopped."
+        },
+        "samo.runTests": {
+          "type": "boolean",
+          "default": true,
+          "description": "After SaMo applies code changes, run the project's detected test command (for example npm test) as a regression check. Only runs in trusted workspaces."
+        },
+        "samo.maxFixIterations": {
+          "type": "integer",
+          "default": 2,
+          "minimum": 0,
+          "maximum": 5,
+          "description": "How many times SaMo may automatically fix its own changes when regression tests fail."
+        },
+        "samo.maxUnderstandFiles": {
+          "type": "integer",
+          "default": 80,
+          "minimum": 10,
+          "maximum": 300,
+          "description": "Maximum number of files SaMo reads line by line when asked to understand a project or folder."
         }
       }
     }

@@ -307,6 +307,7 @@ body {
 
 .fix-actions {
   display: flex;
+  flex-wrap: wrap;
   gap: 8px;
   margin-top: 8px;
   margin-left: 32px;
@@ -438,4 +439,17 @@ body {
 
 .send-btn:not(:disabled):hover {
   background: var(--vscode-button-hoverBackground);
+}
+
+.fix-actions .fix-state {
+  margin: 0;
+}
+
+.empty-hints {
+  margin: 12px 0 0;
+  padding-left: 18px;
+  text-align: left;
+  color: var(--vscode-descriptionForeground);
+  font-size: 11px;
+  line-height: 1.6;
 }
