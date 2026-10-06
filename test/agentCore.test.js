@@ -71,3 +71,16 @@ test("parsePlan validates tasks and renderTaskBoard shows progress", () => {
   assert.match(board, /\(1\/2 complete\)/);
   assert.match(board, /1\. ✅ A/);
 });
+
+test("project audit requests are detected; leaked tool calls are caught", () => {
+  assert.equal(core.detectIntent("check my project and see if there any issue or error"), "audit");
+  assert.equal(core.detectIntent("scan the codebase for bugs"), "audit");
+  assert.equal(core.detectIntent("are there any errors in src/api folder?"), "audit");
+  assert.equal(core.detectIntent("fix these issues"), "develop");
+  assert.equal(core.detectIntent("review my changes"), "review");
+  assert.equal(core.detectIntent("Add wishlist functionality"), "develop");
+  const leak = "<tool_call> <function=search_shopify_docs> <parameter=query> esbuild </parameter> </function> </tool_call>";
+  assert.equal(core.hasLeakedToolCall(leak), true);
+  assert.equal(core.stripLeakedToolCalls(`ok ${leak}`), "ok");
+  assert.equal(core.hasLeakedToolCall("normal answer"), false);
+});

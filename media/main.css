@@ -41,8 +41,11 @@ body {
   width: 22px;
   height: 22px;
   border-radius: 50%;
-  background: linear-gradient(135deg, #6c4cf1, #14b8a6);
-  color: #fff;
+  background: #fff url("data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCA2NCA2NCI+CiAgPHBhdGggZmlsbD0iIzE3MTcxNyIgZD0iTTIwIDRoMjRjOSAwIDE2IDcgMTYgMTZ2MTRjMCA5LTYgMTYtMTUgMTdsLTE3IDIgMSA2LTEyLThoLTJDOSA1MSA1IDQ3IDUgNDFWMTlDNSAxMCAxMSA0IDIwIDRaIi8+CiAgPHJlY3QgeD0iMTgiIHk9IjIzIiB3aWR0aD0iNiIgaGVpZ2h0PSIxOCIgcng9IjMiIGZpbGw9IiNGRkZGRkYiLz4KICA8cmVjdCB4PSIyOSIgeT0iMTciIHdpZHRoPSI2IiBoZWlnaHQ9IjMwIiByeD0iMyIgZmlsbD0iI0ZGRkZGRiIvPgogIDxyZWN0IHg9IjQwIiB5PSIyMyIgd2lkdGg9IjYiIGhlaWdodD0iMTgiIHJ4PSIzIiBmaWxsPSIjRkZGRkZGIi8+Cjwvc3ZnPgo=") center / 80% no-repeat;
+  border: 1px solid #171717;
+  color: transparent;
+  font-size: 0;
+  overflow: hidden;
   display: flex;
   align-items: center;
   justify-content: center;
@@ -95,6 +98,7 @@ body {
 
 .message {
   display: flex;
+  flex-wrap: wrap;
   gap: 8px;
   align-items: flex-start;
 }
@@ -117,7 +121,10 @@ body {
 }
 
 .message.assistant .bubble-avatar {
-  background: linear-gradient(135deg, #6c4cf1, #14b8a6);
+  background: #fff url("data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCA2NCA2NCI+CiAgPHBhdGggZmlsbD0iIzE3MTcxNyIgZD0iTTIwIDRoMjRjOSAwIDE2IDcgMTYgMTZ2MTRjMCA5LTYgMTYtMTUgMTdsLTE3IDIgMSA2LTEyLThoLTJDOSA1MSA1IDQ3IDUgNDFWMTlDNSAxMCAxMSA0IDIwIDRaIi8+CiAgPHJlY3QgeD0iMTgiIHk9IjIzIiB3aWR0aD0iNiIgaGVpZ2h0PSIxOCIgcng9IjMiIGZpbGw9IiNGRkZGRkYiLz4KICA8cmVjdCB4PSIyOSIgeT0iMTciIHdpZHRoPSI2IiBoZWlnaHQ9IjMwIiByeD0iMyIgZmlsbD0iI0ZGRkZGRiIvPgogIDxyZWN0IHg9IjQwIiB5PSIyMyIgd2lkdGg9IjYiIGhlaWdodD0iMTgiIHJ4PSIzIiBmaWxsPSIjRkZGRkZGIi8+Cjwvc3ZnPgo=") center / 80% no-repeat;
+  border: 1px solid #171717;
+  color: transparent;
+  font-size: 0;
 }
 
 .message.system .bubble-avatar {
@@ -125,7 +132,7 @@ body {
 }
 
 .bubble {
-  flex: 1;
+  flex: 1 1 calc(100% - 32px);
   min-width: 0;
   padding: 8px 10px;
   border-radius: 8px;
@@ -309,12 +316,13 @@ body {
   display: flex;
   flex-wrap: wrap;
   gap: 8px;
-  margin-top: 8px;
-  margin-left: 32px;
+  flex: 0 0 calc(100% - 32px);
+  margin: 0 0 0 32px;
 }
 
 .fix-state {
-  margin: 8px 0 0 32px;
+  flex: 0 0 calc(100% - 32px);
+  margin: 0 0 0 32px;
   color: var(--vscode-descriptionForeground);
   font-size: 11px;
 }
@@ -379,20 +387,88 @@ body {
   border-top: 1px solid var(--vscode-sideBarSectionHeader-border, transparent);
 }
 
-.context-toggle {
-  display: flex;
-  align-items: center;
+.changes-chip {
   align-self: flex-start;
+  display: inline-flex;
+  align-items: center;
   gap: 6px;
-  color: var(--vscode-descriptionForeground);
-  font-size: 11px;
+  padding: 3px 10px;
+  border-radius: 8px;
+  border: 1px solid var(--vscode-widget-border, var(--vscode-input-border, rgba(128, 128, 128, 0.4)));
+  background: var(--vscode-editorWidget-background, var(--vscode-input-background));
+  color: var(--vscode-foreground);
+  font: inherit;
+  font-size: 12px;
   cursor: pointer;
 }
 
-.context-toggle input {
-  margin: 0;
-  accent-color: var(--vscode-focusBorder);
+.changes-chip[hidden],
+.context-chips[hidden] {
+  display: none;
 }
+
+.changes-chip .plus { color: var(--vscode-gitDecoration-addedResourceForeground, #4fb35a); }
+.changes-chip .minus { color: var(--vscode-gitDecoration-deletedResourceForeground, #e5534b); }
+
+.composer-box {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 6px;
+  border-radius: 10px;
+  border: 1px solid var(--vscode-input-border, rgba(128, 128, 128, 0.4));
+  background: var(--vscode-input-background);
+}
+
+.composer-box:focus-within {
+  border-color: var(--vscode-focusBorder);
+}
+
+.context-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+
+.chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  max-width: 100%;
+  padding: 2px 6px;
+  border-radius: 6px;
+  border: 1px solid var(--vscode-widget-border, rgba(128, 128, 128, 0.4));
+  background: var(--vscode-editorWidget-background, transparent);
+  color: var(--vscode-descriptionForeground);
+  font-size: 12px;
+  cursor: pointer;
+  opacity: 0.75;
+}
+
+.chip.attached {
+  opacity: 1;
+  color: var(--vscode-foreground);
+}
+
+.chip-pin { font-size: 11px; }
+
+.chip-label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.chip-close {
+  padding: 0 2px;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  font-size: 14px;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.chip-close:hover { color: var(--vscode-errorForeground); }
 
 .composer-input {
   display: flex;
@@ -406,17 +482,14 @@ body {
   max-height: 160px;
   padding: 8px 10px;
   border-radius: 8px;
-  border: 1px solid var(--vscode-input-border, transparent);
-  background: var(--vscode-input-background);
+  border: 0;
+  background: transparent;
   color: var(--vscode-input-foreground);
   font-family: inherit;
   font-size: 13px;
   outline: none;
 }
 
-#input:focus {
-  border-color: var(--vscode-focusBorder);
-}
 
 .send-btn {
   width: 32px;
@@ -452,4 +525,77 @@ body {
   color: var(--vscode-descriptionForeground);
   font-size: 11px;
   line-height: 1.6;
+}
+
+.attachments {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.attachment {
+  position: relative;
+  width: 56px;
+  height: 56px;
+}
+
+.attachment img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  border-radius: 6px;
+  border: 1px solid var(--vscode-widget-border, rgba(128, 128, 128, 0.4));
+}
+
+.attachment-remove {
+  position: absolute;
+  top: -5px;
+  right: -5px;
+  width: 16px;
+  height: 16px;
+  padding: 0;
+  border: 0;
+  border-radius: 50%;
+  background: var(--vscode-errorForeground);
+  color: #fff;
+  font-size: 12px;
+  line-height: 16px;
+  cursor: pointer;
+}
+
+.attach-btn {
+  border: 0;
+  background: transparent;
+  color: var(--vscode-foreground);
+  opacity: 0.7;
+  font-size: 16px;
+  padding: 6px;
+  cursor: pointer;
+}
+
+.attach-btn:hover {
+  opacity: 1;
+}
+
+.message-images {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 8px;
+}
+
+.message-images img {
+  max-width: 100%;
+  max-height: 160px;
+  border-radius: 6px;
+  border: 1px solid var(--vscode-widget-border, rgba(128, 128, 128, 0.4));
+}
+
+.brand-logo {
+  width: 56px;
+  height: 56px;
+  margin: 0 auto 10px;
+  border-radius: 14px;
+  background: #fff url("data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCA2NCA2NCI+CiAgPHBhdGggZmlsbD0iIzE3MTcxNyIgZD0iTTIwIDRoMjRjOSAwIDE2IDcgMTYgMTZ2MTRjMCA5LTYgMTYtMTUgMTdsLTE3IDIgMSA2LTEyLThoLTJDOSA1MSA1IDQ3IDUgNDFWMTlDNSAxMCAxMSA0IDIwIDRaIi8+CiAgPHJlY3QgeD0iMTgiIHk9IjIzIiB3aWR0aD0iNiIgaGVpZ2h0PSIxOCIgcng9IjMiIGZpbGw9IiNGRkZGRkYiLz4KICA8cmVjdCB4PSIyOSIgeT0iMTciIHdpZHRoPSI2IiBoZWlnaHQ9IjMwIiByeD0iMyIgZmlsbD0iI0ZGRkZGRiIvPgogIDxyZWN0IHg9IjQwIiB5PSIyMyIgd2lkdGg9IjYiIGhlaWdodD0iMTgiIHJ4PSIzIiBmaWxsPSIjRkZGRkZGIi8+Cjwvc3ZnPgo=") center / 78% no-repeat;
+  border: 1px solid #171717;
 }

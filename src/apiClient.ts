@@ -1,6 +1,8 @@
 import * as vscode from "vscode";
 
 const defaultRequestInactivityTimeoutSeconds = 120;
+const maxTransientRetries = 2;
+const transientRetryDelayMs = 1_000;
 
 export interface ChatRequestResult {
   answer?: string;
@@ -131,6 +133,22 @@ export class SamoApiClient {
     history: ChatHistoryItem[] = [],
     onEvent?: (event: ChatStreamEvent) => void,
   ): Promise<ChatRequestResult> {
+    let result = await this.sendOnce(message, history, onEvent);
+    for (let attempt = 1; attempt <= maxTransientRetries && result.retryable; attempt += 1) {
+      onEvent?.({ type: "status", message: `Connection dropped. Retrying (${attempt}/${maxTransientRetries})...` });
+      await new Promise((resolve) => setTimeout(resolve, attempt * transientRetryDelayMs));
+      onEvent?.({ type: "reset" });
+      result = await this.sendOnce(message, history, onEvent);
+    }
+    const { retryable: _retryable, ...publicResult } = result;
+    return publicResult;
+  }
+
+  private async sendOnce(
+    message: string,
+    history: ChatHistoryItem[],
+    onEvent?: (event: ChatStreamEvent) => void,
+  ): Promise<ChatRequestResult & { retryable?: boolean }> {
     const apiUrl = this.getApiUrl();
     if (!apiUrl) {
       return { error: 'Set the "samo.apiUrl" setting to your deployed SaMo API URL first.' };
@@ -319,6 +337,7 @@ export class SamoApiClient {
       const host = new URL(requestUrl).host;
       return {
         error: `Could not reach ${host}. Check the samo.apiUrl setting, confirm the API service is online, and verify your network or VPN. Details: ${detail}`,
+        retryable: true,
       };
     } finally {
       clearTimeout(timeout);

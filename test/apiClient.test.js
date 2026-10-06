@@ -149,3 +149,33 @@ test("reports the API host and underlying network error", async () => {
   assert.match(result.error, /samo\.example\.com/);
   assert.match(result.error, /ENOTFOUND/);
 });
+
+test("retries a dropped connection and succeeds without surfacing the error", async () => {
+  let calls = 0;
+  global.fetch = async () => {
+    calls += 1;
+    if (calls < 3) {
+      const error = new TypeError("fetch failed");
+      error.cause = { code: "UND_ERR_SOCKET", message: "other side closed" };
+      throw error;
+    }
+    return new Response(JSON.stringify({ answer: "recovered" }), { headers: { "content-type": "application/json" } });
+  };
+  const result = await createClient().sendMessage("hello");
+  assert.equal(calls, 3);
+  assert.deepEqual(result, { answer: "recovered" });
+});
+
+test("reports the network error after retries are exhausted", async () => {
+  let calls = 0;
+  global.fetch = async () => {
+    calls += 1;
+    const error = new TypeError("fetch failed");
+    error.cause = { code: "UND_ERR_SOCKET", message: "other side closed" };
+    throw error;
+  };
+  const result = await createClient().sendMessage("hello");
+  assert.equal(calls, 3);
+  assert.match(result.error, /Could not reach samo\.example\.com.*UND_ERR_SOCKET/);
+  assert.equal("retryable" in result, false);
+});

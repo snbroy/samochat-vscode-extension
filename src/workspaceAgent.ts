@@ -42,6 +42,41 @@ const b64 = (text: string): string => Buffer.from(text, "utf8").toString("base64
 const fromB64 = (value: string): string => Buffer.from(value, "base64").toString("utf8");
 const decoder = new TextDecoder("utf-8");
 
+function countLineChanges(before: string, after: string): { added: number; removed: number } {
+  const counts = new Map<string, number>();
+  const split = (text: string): string[] => (text === "" ? [] : text.split("\n"));
+  for (const line of split(before)) {
+    counts.set(line, (counts.get(line) ?? 0) + 1);
+  }
+  let added = 0;
+  for (const line of split(after)) {
+    const remaining = counts.get(line) ?? 0;
+    if (remaining > 0) {
+      counts.set(line, remaining - 1);
+    } else {
+      added += 1;
+    }
+  }
+  let removed = 0;
+  for (const remaining of counts.values()) {
+    removed += remaining;
+  }
+  return { added, removed };
+}
+
+export function snapshotDiffStats(snapshot: Snapshot): { added: number; removed: number } {
+  let added = 0;
+  let removed = 0;
+  for (const file of snapshot.files) {
+    const before = file.existed && file.original !== undefined ? fromB64(file.original) : "";
+    const after = file.applied !== undefined ? fromB64(file.applied) : "";
+    const delta = countLineChanges(before, after);
+    added += delta.added;
+    removed += delta.removed;
+  }
+  return { added, removed };
+}
+
 export function getWorkspaceRoot(): string | undefined {
   const active = vscode.window.activeTextEditor?.document.uri;
   const folder = (active && vscode.workspace.getWorkspaceFolder(active)) ?? vscode.workspace.workspaceFolders?.[0];
@@ -381,4 +416,52 @@ export async function createPullRequest(
   }
   const url = pr.out.split(/\s+/).find((part) => /^https?:\/\//.test(part));
   return { ok: true, message: `Pull request created from ${branch}.`, url, branch };
+}
+
+export interface DiagnosticEntry {
+  path: string;
+  line: number;
+  severity: "error" | "warning";
+  message: string;
+  source?: string;
+}
+
+/** Problems VS Code already knows about (TypeScript, ESLint, Pylance, ...) for files in the workspace. */
+export function getWorkspaceDiagnostics(root: string, limit = 150): DiagnosticEntry[] {
+  const entries: DiagnosticEntry[] = [];
+  for (const [uri, diagnostics] of vscode.languages.getDiagnostics()) {
+    if (uri.scheme !== "file") {
+      continue;
+    }
+    const relative = path.relative(root, uri.fsPath).split(path.sep).join("/");
+    if (!relative || relative.startsWith("..") || isIgnoredPath(relative)) {
+      continue;
+    }
+    for (const diagnostic of diagnostics) {
+      if (diagnostic.severity > vscode.DiagnosticSeverity.Warning) {
+        continue;
+      }
+      entries.push({
+        path: relative,
+        line: diagnostic.range.start.line + 1,
+        severity: diagnostic.severity === vscode.DiagnosticSeverity.Error ? "error" : "warning",
+        message: diagnostic.message.split("\n")[0].slice(0, 300),
+        source: diagnostic.source,
+      });
+    }
+  }
+  entries.sort((a, b) => (a.severity === b.severity ? a.path.localeCompare(b.path) || a.line - b.line : a.severity === "error" ? -1 : 1));
+  return entries.slice(0, limit);
+}
+
+export async function resolveTypeCheckCommand(root: string, files: string[]): Promise<TestCommand | undefined> {
+  if (!files.includes("tsconfig.json")) {
+    return undefined;
+  }
+  try {
+    await fs.access(path.join(root, "node_modules", ".bin", process.platform === "win32" ? "tsc.cmd" : "tsc"));
+    return { command: path.join(root, "node_modules", ".bin", "tsc"), args: ["--noEmit"], label: "tsc --noEmit" };
+  } catch {
+    return undefined;
+  }
 }

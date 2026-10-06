@@ -1,3 +1,5 @@
+<p align="center"><img src="media/icon.png" alt="SaMo logo" width="96"></p>
+
 # SaMo Chat
 
 Chat with **SaMo**, an AI-powered Shopify engineering assistant, directly inside VS Code — in a ChatGPT/Copilot-style panel.

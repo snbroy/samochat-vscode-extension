@@ -1,14 +1,19 @@
 import * as vscode from "vscode";
 import { SamoApiClient } from "./apiClient";
 import { ChatViewProvider } from "./chatViewProvider";
+import { InlineEditManager } from "./inlineEdit";
+import { SamoCompletionProvider } from "./autocomplete";
 
 const secretKeyAccessToken = "samo.accessToken";
 
 export function activate(context: vscode.ExtensionContext): void {
   const apiClient = new SamoApiClient(context, secretKeyAccessToken);
-  const provider = new ChatViewProvider(context, apiClient);
+  const inlineEdits = new InlineEditManager();
+  const provider = new ChatViewProvider(context, apiClient, inlineEdits);
 
   context.subscriptions.push(
+    inlineEdits,
+    vscode.languages.registerInlineCompletionItemProvider({ pattern: "**" }, new SamoCompletionProvider(apiClient)),
     vscode.window.registerWebviewViewProvider(ChatViewProvider.viewType, provider, {
       webviewOptions: { retainContextWhenHidden: true },
     }),

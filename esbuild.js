@@ -13,7 +13,7 @@ async function main() {
     platform: "node",
     target: "node18",
     outfile: "dist/extension.js",
-    external: ["vscode"],
+    external: ["vscode", "tesseract.js"],
     logLevel: "info",
   });
   const webviewContext = await esbuild.context({

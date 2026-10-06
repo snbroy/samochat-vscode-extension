@@ -5,11 +5,25 @@
   const messagesEl = document.getElementById("messages");
   const emptyStateEl = document.getElementById("empty-state");
   const inputEl = document.getElementById("input");
-  const editorContextEl = document.getElementById("editor-context");
+  const chipsEl = document.getElementById("context-chips");
+  const chipEl = document.getElementById("editor-chip");
+  const chipLabelEl = document.getElementById("editor-chip-label");
+  const chipCloseEl = document.getElementById("editor-chip-close");
+  const changesChipEl = document.getElementById("changes-chip");
   const sendBtn = document.getElementById("send-btn");
   const clearBtn = document.getElementById("clear-btn");
+  const attachBtn = document.getElementById("attach-btn");
+  const fileInput = document.getElementById("file-input");
+  const attachmentsEl = document.getElementById("attachments");
+
+  const maxImages = 4;
+  const maxImageDim = 1600;
+  let attachments = [];
 
   let thinking = false;
+  let editorCtx = null;
+  let ctxAttached = false;
+  let ctxKey = "";
   let thinkingStatus = "SaMo is thinking";
 
   function escapeHtml(text) {
@@ -42,6 +56,18 @@
       bubble.innerHTML = message.role === "assistant" && !message.text.trim()
         ? (thinking ? "" : "No response was received. Try sending your message again.")
         : renderMarkdown(message.text);
+
+      if (message.role === "user" && Array.isArray(message.images) && message.images.length) {
+        const gallery = document.createElement("div");
+        gallery.className = "message-images";
+        for (const src of message.images) {
+          const img = document.createElement("img");
+          img.src = src;
+          img.alt = "Attached screenshot";
+          gallery.appendChild(img);
+        }
+        bubble.appendChild(gallery);
+      }
 
       row.appendChild(avatar);
       row.appendChild(bubble);
@@ -174,23 +200,172 @@
     messagesEl.scrollTop = messagesEl.scrollHeight;
   }
 
+  function renderChip() {
+    if (!editorCtx) {
+      chipsEl.hidden = true;
+      return;
+    }
+    const range = editorCtx.hasSelection
+      ? editorCtx.startLine === editorCtx.endLine
+        ? `:${editorCtx.startLine}`
+        : `:${editorCtx.startLine}-${editorCtx.endLine}`
+      : "";
+    chipLabelEl.textContent = `${editorCtx.name}${range}`;
+    chipEl.title = editorCtx.hasSelection
+      ? `Selected lines in ${editorCtx.path}${range ? ` (${range.slice(1)})` : ""} will be sent to SaMo`
+      : `${editorCtx.path} — click to ${ctxAttached ? "detach from" : "attach to"} this message`;
+    chipEl.classList.toggle("attached", ctxAttached);
+    chipEl.classList.toggle("selection", Boolean(editorCtx.hasSelection));
+    chipsEl.hidden = editorCtx.hasSelection ? !ctxAttached : false;
+  }
+
+  function setEditorContext(context) {
+    editorCtx = context || null;
+    if (!editorCtx) {
+      ctxKey = "";
+      ctxAttached = false;
+    } else {
+      const key = `${editorCtx.path}|${editorCtx.startLine || ""}|${editorCtx.endLine || ""}`;
+      if (key !== ctxKey) {
+        ctxKey = key;
+        ctxAttached = Boolean(editorCtx.hasSelection);
+      }
+    }
+    renderChip();
+  }
+
+  function renderChanges(messagesList) {
+    let files = 0;
+    let added = 0;
+    let removed = 0;
+    for (const message of messagesList) {
+      const cs = message.changeSet;
+      if (cs && cs.status === "applied") {
+        files += cs.files.length;
+        added += cs.added || 0;
+        removed += cs.removed || 0;
+      }
+    }
+    if (!files) {
+      changesChipEl.hidden = true;
+      return;
+    }
+    changesChipEl.hidden = false;
+    changesChipEl.innerHTML = `<span class="chip-files">${files} ${files === 1 ? "File" : "Files"}</span> <span class="plus">+${added}</span> <span class="minus">-${removed}</span>`;
+  }
+
+  chipEl.addEventListener("click", (event) => {
+    if (event.target instanceof Element && event.target.closest(".chip-close")) return;
+    if (!editorCtx) return;
+    ctxAttached = !ctxAttached;
+    renderChip();
+  });
+  chipCloseEl.addEventListener("click", () => {
+    ctxAttached = false;
+    renderChip();
+  });
+  changesChipEl.addEventListener("click", () => {
+    const rows = messagesEl.querySelectorAll(".fix-actions");
+    const last = rows[rows.length - 1];
+    if (last) last.scrollIntoView({ behavior: "smooth", block: "center" });
+  });
+
   function autoResize() {
     inputEl.style.height = "auto";
     inputEl.style.height = `${Math.min(inputEl.scrollHeight, 160)}px`;
   }
 
   function updateSendState() {
-    sendBtn.disabled = thinking || inputEl.value.trim().length === 0;
+    sendBtn.disabled = thinking || (inputEl.value.trim().length === 0 && attachments.length === 0);
   }
 
+  function renderAttachments() {
+    attachmentsEl.innerHTML = "";
+    attachmentsEl.hidden = attachments.length === 0;
+    attachments.forEach((src, index) => {
+      const item = document.createElement("span");
+      item.className = "attachment";
+      const img = document.createElement("img");
+      img.src = src;
+      img.alt = `Attachment ${index + 1}`;
+      const remove = document.createElement("button");
+      remove.type = "button";
+      remove.className = "attachment-remove";
+      remove.title = "Remove image";
+      remove.textContent = "\u00d7";
+      remove.addEventListener("click", () => {
+        attachments.splice(index, 1);
+        renderAttachments();
+        updateSendState();
+      });
+      item.appendChild(img);
+      item.appendChild(remove);
+      attachmentsEl.appendChild(item);
+    });
+  }
+
+  function readImage(file) {
+    return new Promise((resolve) => {
+      const reader = new FileReader();
+      reader.onerror = () => resolve(null);
+      reader.onload = () => {
+        const img = new Image();
+        img.onerror = () => resolve(null);
+        img.onload = () => {
+          const scale = Math.min(1, maxImageDim / Math.max(img.width, img.height));
+          const canvas = document.createElement("canvas");
+          canvas.width = Math.max(1, Math.round(img.width * scale));
+          canvas.height = Math.max(1, Math.round(img.height * scale));
+          canvas.getContext("2d").drawImage(img, 0, 0, canvas.width, canvas.height);
+          resolve(canvas.toDataURL("image/jpeg", 0.85));
+        };
+        img.src = String(reader.result);
+      };
+      reader.readAsDataURL(file);
+    });
+  }
+
+  async function addImages(files) {
+    for (const file of files) {
+      if (attachments.length >= maxImages) break;
+      if (!/^image\/(png|jpeg|webp|gif)$/.test(file.type)) continue;
+      const dataUrl = await readImage(file);
+      if (dataUrl) attachments.push(dataUrl);
+    }
+    renderAttachments();
+    updateSendState();
+  }
+
+  attachBtn.addEventListener("click", () => fileInput.click());
+  fileInput.addEventListener("change", () => {
+    void addImages(Array.from(fileInput.files || []));
+    fileInput.value = "";
+  });
+  inputEl.addEventListener("paste", (event) => {
+    const files = Array.from(event.clipboardData?.files || []).filter((file) => file.type.startsWith("image/"));
+    if (files.length) {
+      event.preventDefault();
+      void addImages(files);
+    }
+  });
+  document.addEventListener("dragover", (event) => event.preventDefault());
+  document.addEventListener("drop", (event) => {
+    event.preventDefault();
+    void addImages(Array.from(event.dataTransfer?.files || []));
+  });
+
   function send() {
-    const text = inputEl.value.trim();
-    if (!text || thinking) return;
+    const typed = inputEl.value.trim();
+    if ((!typed && !attachments.length) || thinking) return;
+    const text = typed || "Look at the attached screenshot and fix the problem it shows.";
     vscode.postMessage({
       type: "sendMessage",
       text,
-      includeEditorContext: editorContextEl.checked,
+      includeEditorContext: Boolean(editorCtx) && ctxAttached,
+      images: attachments,
     });
+    attachments = [];
+    renderAttachments();
     inputEl.value = "";
     autoResize();
     updateSendState();
@@ -247,8 +422,11 @@
 
   window.addEventListener("message", (event) => {
     const message = event.data;
-    if (message.type === "history") {
+    if (message.type === "editorContext") {
+      setEditorContext(message.context);
+    } else if (message.type === "history") {
       render(message.messages);
+      renderChanges(message.messages);
     } else if (message.type === "thinking") {
       thinking = Boolean(message.value);
       if (!thinking) thinkingStatus = "SaMo is thinking";

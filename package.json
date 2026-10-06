@@ -2,7 +2,7 @@
   "name": "samo-chat",
   "displayName": "SaMo Chat",
   "description": "SaMo is your AI-powered Shopify engineering assistant, right inside VS Code. Ask Shopify platform questions, get architecture and code guidance, and chat in a familiar ChatGPT/Copilot-style panel — developed by Sanjib Roy.",
-  "version": "0.2.0",
+  "version": "0.4.1",
   "publisher": "devsanjib",
   "author": {
     "name": "Sanjib Roy"
@@ -27,7 +27,7 @@
   ],
   "icon": "media/icon.png",
   "galleryBanner": {
-    "color": "#0B0B12",
+    "color": "#171717",
     "theme": "dark"
   },
   "repository": {
@@ -105,6 +105,16 @@
           "maximum": 300,
           "description": "Maximum time without response data before a SaMo request is stopped."
         },
+        "samo.autocomplete.enabled": {
+          "type": "boolean",
+          "default": true,
+          "description": "Show SaMo inline code suggestions (ghost text, accept with Tab) while you type."
+        },
+        "samo.inlineEdit.enlargeCodeLens": {
+          "type": "boolean",
+          "default": true,
+          "description": "Increase the editor CodeLens font size so SaMo's Keep / Undo buttons are easy to read."
+        },
         "samo.runTests": {
           "type": "boolean",
           "default": true,
@@ -142,5 +152,9 @@
     "esbuild": "^0.20.0",
     "markdown-it": "^15.0.2",
     "typescript": "^5.4.0"
+  },
+  "dependencies": {
+    "@tesseract.js-data/eng": "^1.0.0",
+    "tesseract.js": "^7.0.0"
   }
 }
