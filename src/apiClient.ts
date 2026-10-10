@@ -1,6 +1,7 @@
 import * as vscode from "vscode";
 
 const defaultRequestInactivityTimeoutSeconds = 120;
+export const defaultApiUrl = "https://vs.samotech.co.in";
 const maxTransientRetries = 2;
 const transientRetryDelayMs = 1_000;
 
@@ -8,6 +9,12 @@ export interface ChatRequestResult {
   answer?: string;
   error?: string;
 }
+
+type RetryKind = "network" | "service";
+type InternalChatRequestResult = ChatRequestResult & {
+  retryable?: RetryKind;
+  retryDelayMs?: number;
+};
 
 export interface ChatHistoryItem {
   role: "user" | "assistant";
@@ -22,7 +29,25 @@ export interface ChatStreamEvent {
   error?: string;
 }
 
+export type RequestMode = "chat" | "coding";
+
 class ChatStreamError extends Error {}
+
+function waitBeforeRetry(delayMs: number, signal?: AbortSignal): Promise<boolean> {
+  if (signal?.aborted) return Promise.resolve(false);
+  return new Promise((resolve) => {
+    const timer = setTimeout(() => {
+      signal?.removeEventListener("abort", cancel);
+      resolve(true);
+    }, delayMs);
+    const cancel = (): void => {
+      clearTimeout(timer);
+      signal?.removeEventListener("abort", cancel);
+      resolve(false);
+    };
+    signal?.addEventListener("abort", cancel, { once: true });
+  });
+}
 
 function getNestedString(value: unknown): string | undefined {
   if (typeof value === "string" && value.trim()) {
@@ -88,7 +113,7 @@ export class SamoApiClient {
   ) {}
 
   getApiUrl(): string {
-    return vscode.workspace.getConfiguration("samo").get<string>("apiUrl", "").trim();
+    return vscode.workspace.getConfiguration("samo").get<string>("apiUrl", "").trim() || defaultApiUrl;
   }
 
   normalizeApiUrl(apiUrl: string): string {
@@ -132,15 +157,35 @@ export class SamoApiClient {
     message: string,
     history: ChatHistoryItem[] = [],
     onEvent?: (event: ChatStreamEvent) => void,
+    mode: RequestMode = "chat",
+    signal?: AbortSignal,
   ): Promise<ChatRequestResult> {
-    let result = await this.sendOnce(message, history, onEvent);
-    for (let attempt = 1; attempt <= maxTransientRetries && result.retryable; attempt += 1) {
-      onEvent?.({ type: "status", message: `Connection dropped. Retrying (${attempt}/${maxTransientRetries})...` });
-      await new Promise((resolve) => setTimeout(resolve, attempt * transientRetryDelayMs));
+    if (signal?.aborted) return { error: "SaMo request cancelled." };
+    let result = await this.sendOnce(message, history, onEvent, mode, signal);
+    let retryCount = 0;
+    while (result.retryable) {
+      const retryLimit = result.retryable === "service" ? 1 : maxTransientRetries;
+      if (retryCount >= retryLimit) break;
+      retryCount += 1;
+      const delayMs = result.retryDelayMs ?? retryCount * transientRetryDelayMs;
+      const delaySeconds = Math.ceil(delayMs / 1_000);
+      onEvent?.({
+        type: "status",
+        message: result.retryable === "service"
+          ? `SaMo's service is temporarily busy. Retrying once in ${delaySeconds} ${delaySeconds === 1 ? "second" : "seconds"}...`
+          : `Connection dropped. Retrying (${retryCount}/${maxTransientRetries})...`,
+      });
+      if (!(await waitBeforeRetry(delayMs, signal))) return { error: "SaMo request cancelled." };
       onEvent?.({ type: "reset" });
-      result = await this.sendOnce(message, history, onEvent);
+      result = await this.sendOnce(message, history, onEvent, mode, signal);
     }
-    const { retryable: _retryable, ...publicResult } = result;
+    if (result.retryable === "service" && result.error) {
+      result.error = result.error.replace(
+        "SaMo will retry the request automatically.",
+        "The automatic retry also failed.",
+      );
+    }
+    const { retryable: _retryable, retryDelayMs: _retryDelayMs, ...publicResult } = result;
     return publicResult;
   }
 
@@ -148,7 +193,9 @@ export class SamoApiClient {
     message: string,
     history: ChatHistoryItem[],
     onEvent?: (event: ChatStreamEvent) => void,
-  ): Promise<ChatRequestResult & { retryable?: boolean }> {
+    mode: RequestMode = "chat",
+    signal?: AbortSignal,
+  ): Promise<InternalChatRequestResult> {
     const apiUrl = this.getApiUrl();
     if (!apiUrl) {
       return { error: 'Set the "samo.apiUrl" setting to your deployed SaMo API URL first.' };
@@ -177,6 +224,9 @@ export class SamoApiClient {
 
     const requestInactivityTimeoutMs = this.getRequestTimeoutMs();
     const controller = new AbortController();
+    const abortRequest = (): void => controller.abort();
+    if (signal?.aborted) controller.abort();
+    else signal?.addEventListener("abort", abortRequest, { once: true });
     let timeout: ReturnType<typeof setTimeout> | undefined;
     const resetTimeout = (): void => {
       clearTimeout(timeout);
@@ -211,20 +261,30 @@ export class SamoApiClient {
           "Content-Type": "application/json",
           Authorization: `Bearer ${accessToken}`,
         },
-        body: JSON.stringify({ message, email, history }),
+        body: JSON.stringify({ message, email, history, mode }),
         signal: controller.signal,
       });
       resetTimeout();
 
       if (!response.ok) {
         const rawText = await readResponseBody(response);
+        const serviceUnavailable = [502, 503, 504].includes(response.status);
+        const retryAfterHeader = response.headers.get("retry-after");
+        const retryAfterSeconds = retryAfterHeader && /^\d+$/.test(retryAfterHeader)
+          ? Number(retryAfterHeader)
+          : undefined;
+        const retryDelayMs = retryAfterSeconds !== undefined && Number.isSafeInteger(retryAfterSeconds)
+          ? Math.min(10_000, Math.max(1_000, retryAfterSeconds * 1_000))
+          : 2_000;
+        const isHtml = response.headers.get("content-type")?.toLowerCase().includes("text/html")
+          || /<!doctype\s+html|<html[\s>]/i.test(rawText);
         let body: unknown = rawText;
         try {
-          body = JSON.parse(rawText);
+          if (!isHtml) body = JSON.parse(rawText);
         } catch {
           // Keep plain-text API errors readable.
         }
-        const errorText = getNestedString(body);
+        const errorText = isHtml ? undefined : getNestedString(body);
         let guidance = "";
         if (response.status === 401 || response.status === 403) {
           guidance = " Check that the access token is current and authorized.";
@@ -236,10 +296,18 @@ export class SamoApiClient {
             ? ` The service asked you to retry after ${retryAfter} seconds.`
             : " The service is rate-limiting requests; wait briefly before retrying.";
         } else if (response.status >= 500) {
-          guidance = " The SaMo service may be temporarily unavailable.";
+          guidance = isHtml
+            ? " A temporary gateway error occurred; the SaMo service or model provider may be overloaded."
+            : " The SaMo service may be temporarily unavailable.";
+          if (serviceUnavailable) {
+            guidance += " SaMo will retry the request automatically.";
+          }
         }
         const detail = errorText ? ` ${errorText}` : "";
-        return { error: `SaMo API returned HTTP ${response.status}.${detail}${guidance}` };
+        return {
+          error: `SaMo API returned HTTP ${response.status}.${detail}${guidance}`,
+          ...(serviceUnavailable ? { retryable: "service" as const, retryDelayMs } : {}),
+        };
       }
 
       if (!response.headers.get("content-type")?.toLowerCase().includes("text/event-stream")) {
@@ -319,6 +387,7 @@ export class SamoApiClient {
       return { answer };
     } catch (error) {
       if (controller.signal.aborted) {
+        if (signal?.aborted) return { error: "SaMo request cancelled." };
         const timeoutSeconds = Math.round(requestInactivityTimeoutMs / 1_000);
         return {
           error: `SaMo's API sent no response data for ${timeoutSeconds} seconds. The service may be starting or the AI request may be stalled. Check the API service logs and samo.apiUrl, then use Retry to try again.`,
@@ -337,10 +406,11 @@ export class SamoApiClient {
       const host = new URL(requestUrl).host;
       return {
         error: `Could not reach ${host}. Check the samo.apiUrl setting, confirm the API service is online, and verify your network or VPN. Details: ${detail}`,
-        retryable: true,
+        retryable: "network",
       };
     } finally {
       clearTimeout(timeout);
+      signal?.removeEventListener("abort", abortRequest);
     }
   }
 }

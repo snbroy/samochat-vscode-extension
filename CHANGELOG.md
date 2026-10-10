@@ -1,5 +1,77 @@
 # Change Log
 
+## 0.4.14
+
+- Reply to simple greetings immediately without sending a model request.
+- Keep unrelated earlier conversation and workspace files out of standalone chat requests; retain recent turns for clear follow-ups.
+- Add a bounded iterative coding-agent loop with workspace search/read/edit, language-server relationship and diagnostic tools, Git inspection, and evidence/acceptance tracking.
+- Add approved MCP discovery and model-selected tool calls, plus documentation search/fetch adapters for configured MCP servers.
+- Add individually approved project checks, abortable requests and commands, and progressive previews of the final natural-language summary.
+- Harden webview message validation, content security policy, workspace reads, stale-change checks, and scoped pull-request staging.
+
+## 0.4.13
+
+- Add user-level MCP stdio server configuration, workspace-trust gating, explicit server-start and per-tool approvals, and manual tool list/run commands.
+- Bound MCP server definitions, tool arguments, request duration, and displayed results.
+
+## 0.4.12
+
+- Handle code-change requests in one implementation pass instead of generating a plan and then making separate model calls per task.
+- Keep task plans and pull-request actions out of the response unless explicitly requested.
+- Include VS Code diagnostics when fixing errors and preserve automatic regression checks and bounded repair.
+
+## 0.4.11
+
+- Show the submitted message and a thinking indicator immediately when Send is clicked.
+- Display streamed model output as a temporary live draft while workspace tasks run.
+
+## 0.4.10
+
+- Enforce hard limits on agent iterations, tool calls, and unique changed files.
+- Prioritize relevant workspace context while excluding generated files.
+- Correct diff summaries for repeated lines and use cryptographically generated agent run IDs.
+
+## 0.4.9
+
+- Route common visual design requests (such as improving a footer, header, navigation, or layout) through workspace editing instead of returning copy-and-paste advice.
+- Verify design edits with the project's regression checks and Keep/Undo controls.
+
+## 0.4.8
+
+- When asked to analyze a project and fix issues, apply evidence-based root-cause changes and run regression checks with bounded automatic repair.
+- Route selected-code error fixes through project-aware diagnosis and verification instead of replacing only the selection.
+- Keep the assistant's user-facing progress message natural and concise.
+
+## 0.4.7
+
+- Describe SaMo as a general-purpose assistant instead of a Shopify-focused assistant.
+- Retry temporary 502/503/504 gateway responses once and show a short retry status instead of exposing HTML error pages.
+
+## 0.4.6
+
+- Show a concise retry hint for temporary gateway errors instead of rendering Cloudflare's full HTML error page in chat.
+
+## 0.4.5
+
+- Send separate chat/coding modes to the portal so casual chat and coding tasks use task-appropriate sampling.
+- Improve SaMo's server-side behavior guidance and robustly parse split, CRLF, and final unterminated model SSE events while retaining usage metering.
+- Add optional maintainer-only LoRA training and evaluation tools; no fine-tuned model is included or claimed.
+
+## 0.4.4
+
+- Save multiple workspace-local conversations and switch between recent chats.
+- Migrate existing chat history and keep screenshot data URLs out of persisted sessions.
+
+## 0.4.3
+
+- Run every detected regression check (tests, typecheck, lint, and build) after workspace edits.
+- Report each check and let SaMo make bounded automatic fixes when validation fails.
+
+## 0.4.2
+
+- Default the extension to the SaMo VS Portal and add a command to open the account portal.
+- Clarify account setup and describe the available workspace coding-agent workflows.
+
 ## 0.4.1
 
 - Branding: new black-and-white SaMo logo for the marketplace icon, Activity Bar icon (theme-aware), chat header, assistant avatars and the empty state.

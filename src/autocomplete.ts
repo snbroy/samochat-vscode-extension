@@ -60,7 +60,7 @@ export class SamoCompletionProvider implements vscode.InlineCompletionItemProvid
         "</CODE>",
       ].join("\n");
       try {
-        const result = await this.api.sendMessage(prompt, []);
+        const result = await this.api.sendMessage(prompt, [], undefined, "coding");
         if (token.isCancellationRequested || result.error || !result.answer) {
           return undefined;
         }

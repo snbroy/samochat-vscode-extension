@@ -12,6 +12,9 @@
   const changesChipEl = document.getElementById("changes-chip");
   const sendBtn = document.getElementById("send-btn");
   const clearBtn = document.getElementById("clear-btn");
+  const cancelBtn = document.getElementById("cancel-btn");
+  const newChatBtn = document.getElementById("new-chat-btn");
+  const chatSelect = document.getElementById("chat-select");
   const attachBtn = document.getElementById("attach-btn");
   const fileInput = document.getElementById("file-input");
   const attachmentsEl = document.getElementById("attachments");
@@ -25,6 +28,7 @@
   let ctxAttached = false;
   let ctxKey = "";
   let thinkingStatus = "SaMo is thinking";
+  let streamPreviewText = "";
 
   function escapeHtml(text) {
     return String(text)
@@ -41,7 +45,7 @@
 
   function render(messagesList) {
     messagesEl.innerHTML = "";
-    emptyStateEl.style.display = messagesList.length === 0 ? "block" : "none";
+    emptyStateEl.hidden = messagesList.length !== 0;
 
     messagesList.forEach((message, messageIndex) => {
       const row = document.createElement("div");
@@ -160,18 +164,10 @@
           actions.appendChild(makeBtn("Keep changes", "apply", "keepChangeSet"));
           row.appendChild(actions);
         } else if (cs.status === "kept") {
-          const actions = document.createElement("div");
-          actions.className = "fix-actions";
-          if (cs.prUrl) {
-            const state = document.createElement("div");
-            state.className = "fix-state";
-            state.textContent = "Changes kept. Pull request created.";
-            actions.appendChild(state);
-          } else {
-            actions.appendChild(makeBtn("Review changes", "keep", "reviewChanges"));
-            actions.appendChild(makeBtn("Create PR", "apply", "createPr"));
-          }
-          row.appendChild(actions);
+          const state = document.createElement("div");
+          state.className = "fix-state";
+          state.textContent = cs.prUrl ? "Changes kept. Pull request created." : "Changes kept.";
+          row.appendChild(state);
         } else if (cs.status === "undone") {
           const state = document.createElement("div");
           state.className = "fix-state";
@@ -182,6 +178,20 @@
 
       messagesEl.appendChild(row);
     });
+
+    if (thinking && streamPreviewText) {
+      const row = document.createElement("div");
+      row.className = "message assistant stream-preview";
+      const avatar = document.createElement("div");
+      avatar.className = "bubble-avatar";
+      avatar.textContent = "S";
+      const bubble = document.createElement("div");
+      bubble.className = "bubble markdown-body";
+      bubble.innerHTML = renderMarkdown(streamPreviewText);
+      row.appendChild(avatar);
+      row.appendChild(bubble);
+      messagesEl.appendChild(row);
+    }
 
     if (thinking) {
       const row = document.createElement("div");
@@ -271,8 +281,7 @@
   });
 
   function autoResize() {
-    inputEl.style.height = "auto";
-    inputEl.style.height = `${Math.min(inputEl.scrollHeight, 160)}px`;
+    inputEl.rows = Math.max(1, Math.min(6, inputEl.value.split(/\r?\n/).length));
   }
 
   function updateSendState() {
@@ -358,11 +367,20 @@
     const typed = inputEl.value.trim();
     if ((!typed && !attachments.length) || thinking) return;
     const text = typed || "Look at the attached screenshot and fix the problem it shows.";
+    const images = attachments.slice();
+    thinking = true;
+    thinkingStatus = "SaMo is thinking";
+    streamPreviewText = "";
+    render([
+      ...getLastRenderedMessages(),
+      { role: "user", text, ...(images.length ? { images } : {}) },
+    ]);
+    updateSendState();
     vscode.postMessage({
       type: "sendMessage",
       text,
       includeEditorContext: Boolean(editorCtx) && ctxAttached,
-      images: attachments,
+      images,
     });
     attachments = [];
     renderAttachments();
@@ -384,7 +402,12 @@
   });
 
   sendBtn.addEventListener("click", send);
+  cancelBtn.addEventListener("click", () => vscode.postMessage({ type: "cancel" }));
   clearBtn.addEventListener("click", () => vscode.postMessage({ type: "clear" }));
+  newChatBtn.addEventListener("click", () => vscode.postMessage({ type: "newConversation" }));
+  chatSelect.addEventListener("change", () => {
+    if (chatSelect.value) vscode.postMessage({ type: "switchConversation", id: chatSelect.value });
+  });
 
   messagesEl.addEventListener("click", async (event) => {
     const target = event.target;
@@ -399,8 +422,7 @@
         const clipboardInput = document.createElement("textarea");
         clipboardInput.value = code;
         clipboardInput.setAttribute("readonly", "");
-        clipboardInput.style.position = "fixed";
-        clipboardInput.style.opacity = "0";
+        clipboardInput.className = "clipboard-fallback";
         document.body.appendChild(clipboardInput);
         clipboardInput.select();
         const copied = document.execCommand("copy");
@@ -427,13 +449,34 @@
     } else if (message.type === "history") {
       render(message.messages);
       renderChanges(message.messages);
+    } else if (message.type === "sessions") {
+      chatSelect.replaceChildren();
+      for (const session of message.sessions || []) {
+        const option = document.createElement("option");
+        option.value = session.id;
+        const date = new Date(session.updatedAt);
+        const timeLabel = Number.isNaN(date.getTime())
+          ? ""
+          : ` · ${date.toLocaleDateString()} ${date.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}`;
+        option.textContent = `${session.title || "New chat"}${timeLabel}`;
+        option.title = `${session.messageCount || 0} messages`;
+        chatSelect.appendChild(option);
+      }
+      chatSelect.value = message.activeId || "";
     } else if (message.type === "thinking") {
       thinking = Boolean(message.value);
-      if (!thinking) thinkingStatus = "SaMo is thinking";
+      cancelBtn.hidden = !thinking;
+      if (!thinking) {
+        thinkingStatus = "SaMo is thinking";
+        streamPreviewText = "";
+      }
       updateSendState();
       render(getLastRenderedMessages());
     } else if (message.type === "status") {
       thinkingStatus = String(message.text ?? "SaMo is working");
+      render(getLastRenderedMessages());
+    } else if (message.type === "streamPreview") {
+      streamPreviewText = String(message.text ?? "");
       render(getLastRenderedMessages());
     }
   });

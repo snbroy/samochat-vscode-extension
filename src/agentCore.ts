@@ -1,4 +1,5 @@
 import * as path from "node:path";
+import { createHash, randomUUID } from "node:crypto";
 import { realpath } from "node:fs/promises";
 
 /**
@@ -120,11 +121,16 @@ const packageManagerFiles = new Set([
   "bun.lockb",
 ]);
 
+/** SHA-256 of UTF-8 text, used as an optimistic-concurrency precondition. */
+export function sha256Text(text: string): string {
+  return createHash("sha256").update(text, "utf8").digest("hex");
+}
+
 /** Paths SaMo must never write. */
 export function isProtectedWritePath(relPath: string): boolean {
   const normalized = relPath.replace(/\\/g, "/");
-  const parts = normalized.split("/");
-  const name = parts[parts.length - 1].toLowerCase();
+  const parts = normalized.split("/").map((part) => part.toLowerCase());
+  const name = parts[parts.length - 1] ?? "";
 
   return (
     parts.includes(".git") ||
@@ -322,10 +328,10 @@ const interrogativeStart =
   /^\s*(what|why|how\s+(does|do|is|are|can)|when|where|who|which|is |are |does |do |can you (explain|tell)|could you (explain|tell)|explain|tell me|describe|difference)/i;
 
 const changeVerbs =
-  /\b(add|create|implement|build|write|fix|update|modify|change|refactor|delete|remove|rename|generate|develop|integrate|migrate|rewrite|improve|patch|debug|resolve|complete|finish|extend|support|make)\b/i;
+  /\b(add|create|implement|build|write|fix(?:ed|es|ing)?|update|modify|change|refactor|delete|remove|rename|generate|develop|integrate|migrate|rewrite|redesign|improve|patch|debug|resolve|complete|finish|extend|support|make)\b/i;
 
 const codeNouns =
-  /\b(issues?|problems?|findings|code|file|files|function|class|component|feature|test|tests|endpoint|api|route|page|module|bug|error|button|form|service|hook|query|mutation|schema|logic|ui|style|css|config|script|wishlist|handler|validation)\b/i;
+  /\b(issues?|problems?|findings|code|file|files|function|class|component|feature|test|tests|endpoint|api|route|page|module|bug|error|button|form|service|hook|query|mutation|schema|logic|ui|style|css|config|script|wishlist|handler|validation|footer|header|navbar|navigation|hero|layout|design|color|colour|spacing|font|typography|animation|responsive|mobile|desktop|card|modal|dialog|sidebar|menu|landing page)\b/i;
 
 export function detectIntent(prompt: string): Intent {
   const text = prompt.trim();
@@ -378,6 +384,31 @@ export function detectIntent(prompt: string): Intent {
   }
 
   return "chat";
+}
+
+export function quickReplyFor(prompt: string): string | undefined {
+  const text = prompt.trim().toLowerCase().replace(/[.!?,]+$/g, "");
+  if (/^(hi|hello|hey|hiya|howdy)(\s+(there|samo))?$/.test(text)) {
+    return "Hi! What can I help you with?";
+  }
+  if (/^good (morning|afternoon|evening)(\s+(there|samo))?$/.test(text)) {
+    return "Good day! What can I help you with?";
+  }
+  if (/^(how are you|how's it going|hows it going)$/.test(text)) {
+    return "Doing well—ready to help! What's on your mind?";
+  }
+  return undefined;
+}
+
+export function shouldUseConversationHistory(prompt: string): boolean {
+  const text = prompt.trim();
+  return /\b(it|this|that|these|those|same|above|previous|earlier|continue|again)\b/i.test(text)
+    || /^(why|how|what about|and then)\s*[?!.]*$/i.test(text);
+}
+
+export function shouldIncludeWorkspaceTree(prompt: string): boolean {
+  return mentionsEditor(prompt)
+    || /\b(?:my|our|this|the)\s+(?:project|workspace|codebase|code base|repo|repository|app|application|code|file|folder|component|function|class|module)\b/i.test(prompt);
 }
 
 export function mentionsEditor(prompt: string): boolean {
@@ -871,18 +902,18 @@ export const developJsonContract = `Reply with ONLY one JSON object (no Markdown
   "notes": "optional caveats or follow-ups",
   "changes": [
     { "path": "relative/path.ext", "action": "create", "content": "complete file content" },
-    { "path": "relative/path.ext", "action": "modify", "content": "complete new file content" },
-    { "path": "relative/path.ext", "action": "modify", "edits": [{ "find": "exact unique existing text", "replace": "new text" }] },
-    { "path": "relative/path.ext", "action": "delete" }
+    { "path": "relative/path.ext", "action": "modify", "expectedHash": "SHA-256 from the matching file header", "content": "complete new file content" },
+    { "path": "relative/path.ext", "action": "modify", "expectedHash": "SHA-256 from the matching file header", "edits": [{ "find": "exact unique existing text", "replace": "new text" }] },
+    { "path": "relative/path.ext", "action": "delete", "expectedHash": "SHA-256 from the matching file header" }
   ]
 }
-Rules: paths are relative to the workspace root and must stay inside it; never touch .git, node_modules or .env files; package-manager lockfiles are read-only context and must be changed by the package manager; prefer "edits" for small changes to large files and "content" for new files or full rewrites; every "find" must match exactly once; follow the project's existing conventions; for any new or changed behavior also add or update automated regression tests that fit the project's existing test framework; return {"summary":"...","plan":[],"notes":"","changes":[]} if no file change is needed.`;
+Rules: include "plan" only when the user explicitly asks for steps or a plan; otherwise leave it out. Paths are relative to the workspace root and must stay inside it; for every modify/delete, copy the exact SHA-256 from that file's context header into expectedHash; never modify/delete a file if its hash was not supplied in context; never touch .git, node_modules or .env files; package-manager lockfiles are read-only context and must be changed by the package manager; prefer "edits" for small changes to large files and "content" for new files or full rewrites; every "find" must match exactly once; follow the project's existing conventions; add or update tests only when needed to verify a behavior change; do only what the user requested; return {"summary":"...","notes":"","changes":[]} if no file change is needed.`;
 
 const errorSignals =
   /\b(TypeError|ReferenceError|SyntaxError|RangeError|AssertionError|Uncaught|UnhandledPromiseRejection|Traceback|npm ERR!|error TS\d+|ENOENT|EADDRINUSE|ECONNREFUSED|Cannot find module|Module not found|Failed to compile|is not defined|is not a function|Cannot read propert(?:y|ies)|undefined is not|panic:|Exception|NullPointerException|GraphQL error|Internal Server Error|stack trace)\b|\bat .+\(\s*.+:\d+:\d+\)|File ".+", line \d+|\bERROR\b|\b[45]\d\d\b/i;
 
 const fixWords =
-  /\b(fix|resolve|solve|debug|repair|getting|gets|got|shows?|throws?|failing|fails|broken|crash(?:es|ed)?)\b/i;
+  /\b(fix(?:ed|es|ing)?|resolve|solve|debug|repair|getting|gets|got|shows?|throws?|failing|fails|broken|crash(?:es|ed)?)\b/i;
 
 export function isErrorReport(text: string): boolean {
   if (!errorSignals.test(text)) {
@@ -1066,6 +1097,10 @@ export function isAuditRequest(text: string): boolean {
   );
 }
 
+export function isAuditAndFixRequest(text: string): boolean {
+  return isAuditRequest(text) && /\b(fix|repair|resolve|correct|patch)\b/i.test(text);
+}
+
 const leakedToolCall =
   /<tool_call>|<function=|<\/?parameter[=>]/i;
 
@@ -1212,19 +1247,25 @@ export interface AgentState {
   checkpoints: AgentCheckpoint[];
 }
 
+function clampBudget(value: number, maximum: number, minimum = 0): number {
+  return Number.isFinite(value)
+    ? Math.max(minimum, Math.min(Math.floor(value), maximum))
+    : maximum;
+}
+
 export function createAgentRun(
   goal: string,
   intent: Intent = detectIntent(goal),
   budget: AgentBudget = defaultAgentBudget,
 ): AgentRun {
   return {
-    id: `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`,
+    id: `${Date.now().toString(36)}-${randomUUID().slice(0, 8)}`,
     goal,
     intent,
     phase: "idle",
     iteration: 0,
     toolCalls: 0,
-    maxIterations: Math.max(1, budget.maxIterations),
+    maxIterations: clampBudget(budget.maxIterations, maxAgentIterations, 1),
     changedFiles: [],
     createdFiles: [],
     deletedFiles: [],
@@ -1239,15 +1280,19 @@ export function canContinue(
   budget: AgentBudget,
   startedAt = run.startedAt,
 ): { ok: true } | { ok: false; reason: string } {
-  if (run.iteration >= budget.maxIterations) {
+  const iterationLimit = Math.min(
+    clampBudget(budget.maxIterations, maxAgentIterations, 1),
+    clampBudget(run.maxIterations, maxAgentIterations, 1),
+  );
+  if (run.iteration >= iterationLimit) {
     return { ok: false, reason: "Maximum agent iterations reached." };
   }
 
-  if (run.toolCalls >= budget.maxToolCalls) {
+  if (run.toolCalls >= clampBudget(budget.maxToolCalls, maxToolCalls)) {
     return { ok: false, reason: "Maximum tool calls reached." };
   }
 
-  if (run.changedFiles.length > budget.maxChangedFiles) {
+  if (new Set(run.changedFiles).size > clampBudget(budget.maxChangedFiles, maxChangedFiles)) {
     return { ok: false, reason: "Maximum changed-file budget exceeded." };
   }
 
@@ -1483,21 +1528,22 @@ export function selectContext(
     return { items: [], totalChars: 0 };
   }
 
-  const mentioned = findMentionedPaths(
-    prompt,
-    files.map((file) => file.path),
+  const eligibleFiles = files.filter((file) =>
+    !file.generated && !isGeneratedPath(file.path) && !isIgnoredPath(file.path),
   );
+  const eligiblePaths = eligibleFiles.map((file) => file.path);
+  const mentioned = findMentionedPaths(prompt, eligiblePaths);
 
   const ranked = rankFilesByKeywords(
     prompt,
-    files.map((file) => file.path),
-    files.length,
+    eligiblePaths,
+    eligiblePaths.length,
   );
 
   const priority = [
     ...mentioned.files,
-    ...sortByUnderstandingPriority(files.map((file) => file.path)),
     ...ranked,
+    ...sortByUnderstandingPriority(eligiblePaths),
   ];
 
   const unique = [...new Set(priority)];
@@ -1609,7 +1655,7 @@ export function buildRegressionPlan(
 
   if (test) {
     steps.push({
-      label: "Automated tests",
+      label: `Automated tests (${test.label})`,
       command: test.command,
       args: test.args,
       reason: "Run the project's detected test command after implementation.",
@@ -1694,18 +1740,20 @@ export function summarizeTextDiff(before: string, after: string): DiffSummary {
   const beforeLines = before.split(/\r?\n/);
   const afterLines = after.split(/\r?\n/);
 
-  const beforeSet = new Set(beforeLines);
-  const afterSet = new Set(afterLines);
-
+  const countLines = (lines: string[]) => {
+    const counts = new Map<string, number>();
+    for (const line of lines) counts.set(line, (counts.get(line) ?? 0) + 1);
+    return counts;
+  };
+  const beforeCounts = countLines(beforeLines);
+  const afterCounts = countLines(afterLines);
   let additions = 0;
   let deletions = 0;
-
-  for (const line of afterLines) {
-    if (!beforeSet.has(line)) additions += 1;
+  for (const [line, count] of afterCounts) {
+    additions += Math.max(0, count - (beforeCounts.get(line) ?? 0));
   }
-
-  for (const line of beforeLines) {
-    if (!afterSet.has(line)) deletions += 1;
+  for (const [line, count] of beforeCounts) {
+    deletions += Math.max(0, count - (afterCounts.get(line) ?? 0));
   }
 
   return {

@@ -6,9 +6,16 @@ esbuild.js
 tsconfig.json
 **/*.map
 **/.eslintrc.json
+**/.venv/**
+.venv/**
 *.vsix
+.DS_Store
+Archive.zip
 test/**
+training/**
+PRODUCTION_READINESS.md
 node_modules/tesseract.js-core/*.wasm.js
 node_modules/tesseract.js-core/*-lstm.*
 node_modules/@tesseract.js-data/eng/4.0.0/**
 node_modules/@tesseract.js-data/eng/4.0.0_best_float/**
+node_modules/@modelcontextprotocol/sdk/**

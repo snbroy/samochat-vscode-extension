@@ -1,8 +1,8 @@
 {
   "name": "samo-chat",
   "displayName": "SaMo Chat",
-  "description": "SaMo is your AI-powered Shopify engineering assistant, right inside VS Code. Ask Shopify platform questions, get architecture and code guidance, and chat in a familiar ChatGPT/Copilot-style panel — developed by Sanjib Roy.",
-  "version": "0.4.1",
+  "description": "SaMo is your AI coding assistant in VS Code: chat, build and debug projects, edit files, run tests, and review changes.",
+  "version": "0.4.14",
   "publisher": "devsanjib",
   "author": {
     "name": "Sanjib Roy"
@@ -18,10 +18,11 @@
   ],
   "keywords": [
     "samo",
-    "shopify",
     "chat",
     "ai",
     "assistant",
+    "coding",
+    "programming",
     "chatgpt",
     "copilot"
   ],
@@ -53,8 +54,28 @@
         "title": "SaMo: Clear Chat History"
       },
       {
+        "command": "samo.newChat",
+        "title": "SaMo: New Conversation"
+      },
+      {
+        "command": "samo.switchConversation",
+        "title": "SaMo: Switch Conversation"
+      },
+      {
         "command": "samo.setAccessToken",
         "title": "SaMo: Set Access Token"
+      },
+      {
+        "command": "samo.openAccountPortal",
+        "title": "SaMo: Open Account Portal"
+      },
+      {
+        "command": "samo.mcp.listTools",
+        "title": "SaMo: List MCP Tools"
+      },
+      {
+        "command": "samo.mcp.callTool",
+        "title": "SaMo: Run MCP Tool"
       }
     ],
     "viewsContainers": {
@@ -90,13 +111,13 @@
       "properties": {
         "samo.apiUrl": {
           "type": "string",
-          "default": "",
-          "description": "Base URL of the deployed SaMo API (for example https://your-railway-domain). Required before chatting."
+          "default": "https://vs.samotech.co.in",
+          "description": "Base URL of the SaMo VS Portal API. Defaults to https://vs.samotech.co.in."
         },
         "samo.email": {
           "type": "string",
           "default": "",
-          "description": "Email address sent with each chat request, as required by the SaMo API."
+          "description": "Email address associated with your SaMo VS Portal account."
         },
         "samo.requestTimeoutSeconds": {
           "type": "integer",
@@ -118,7 +139,7 @@
         "samo.runTests": {
           "type": "boolean",
           "default": true,
-          "description": "After SaMo applies code changes, run the project's detected test command (for example npm test) as a regression check. Only runs in trusted workspaces."
+          "description": "After SaMo applies code changes, run detected tests, typecheck, lint, and build checks as regression checks. Only runs in trusted workspaces."
         },
         "samo.maxFixIterations": {
           "type": "integer",
@@ -133,6 +154,44 @@
           "minimum": 10,
           "maximum": 300,
           "description": "Maximum number of files SaMo reads line by line when asked to understand a project or folder."
+        },
+        "samo.mcp.servers": {
+          "type": "array",
+          "scope": "application",
+          "default": [],
+          "description": "User-level MCP stdio server configurations. Servers start only after confirmation; every tool call requires separate approval. Environment values are stored in VS Code user settings, so prefer inherited shell environment variables for secrets.",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "name",
+              "command"
+            ],
+            "properties": {
+              "name": {
+                "type": "string",
+                "description": "Unique server label."
+              },
+              "command": {
+                "type": "string",
+                "description": "Executable used to launch the MCP server."
+              },
+              "args": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                },
+                "description": "Command-line arguments."
+              },
+              "env": {
+                "type": "object",
+                "additionalProperties": {
+                  "type": "string"
+                },
+                "description": "Environment overrides. Avoid storing credentials here; use inherited environment variables where possible."
+              }
+            }
+          }
         }
       }
     }
@@ -154,7 +213,10 @@
     "typescript": "^5.4.0"
   },
   "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.32.1",
     "@tesseract.js-data/eng": "^1.0.0",
-    "tesseract.js": "^7.0.0"
+    "ajv": "^8.20.0",
+    "tesseract.js": "^7.0.0",
+    "zod": "^4.6.5"
   }
 }
