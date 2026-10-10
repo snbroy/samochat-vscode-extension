@@ -46,6 +46,21 @@ test("normalizes supported API URL suffixes", () => {
   assert.equal(client.normalizeApiUrl("https://samo.example.com/api"), "https://samo.example.com");
 });
 
+test("defaults requests to the SaMo VS Portal when the API URL is empty", async () => {
+  configuration.apiUrl = "";
+  let requestUrl = "";
+  global.fetch = async (input) => {
+    requestUrl = String(input);
+    return new Response('data: {"type":"complete","answer":"ready"}\n\n', {
+      headers: { "content-type": "text/event-stream" },
+    });
+  };
+
+  const result = await createClient().sendMessage("hello");
+  assert.equal(requestUrl, "https://vs.samotech.co.in/api/chat");
+  assert.equal(result.answer, "ready");
+});
+
 test("bounds the configured request inactivity timeout", () => {
   const client = createClient();
   assert.equal(client.getRequestTimeoutMs(), 120_000);
@@ -66,15 +81,40 @@ test("rejects unsupported API protocols without making a request", async () => {
 });
 
 test("returns an actionable HTTP service error", async () => {
-  global.fetch = async () => new Response(
-    JSON.stringify({ error: "Temporarily unavailable" }),
-    { status: 503, headers: { "content-type": "application/json" } },
-  );
-
-  const result = await createClient().sendMessage("hello");
+  let calls = 0;
+  const events = [];
+  global.fetch = async () => {
+    calls += 1;
+    return new Response(
+      JSON.stringify({ error: "Temporarily unavailable" }),
+      {
+        status: 503,
+        headers: { "content-type": "application/json", "retry-after": "1" },
+      },
+    );
+  };
+  const result = await createClient().sendMessage("hello", [], (event) => events.push(event.type));
   assert.match(result.error, /HTTP 503/);
   assert.match(result.error, /Temporarily unavailable/);
-  assert.match(result.error, /temporarily unavailable/);
+  assert.match(result.error, /temporarily unavailable/i);
+  assert.equal(calls, 2);
+  assert.ok(events.includes("reset"));
+});
+
+test("keeps Cloudflare HTML gateway errors out of chat and explains how to retry", async () => {
+  global.fetch = async () => new Response(
+    "<!doctype html><html><title>502: Bad gateway</title><body>Cloudflare error page</body></html>",
+    {
+      status: 502,
+      headers: { "content-type": "text/html", "retry-after": "1" },
+    },
+  );
+
+  const result = await createClient().sendMessage("hi");
+  assert.match(result.error, /HTTP 502/);
+  assert.match(result.error, /temporary gateway error/);
+  assert.match(result.error, /automatic retry also failed/i);
+  assert.doesNotMatch(result.error, /Cloudflare error page|<!doctype|<html/);
 });
 
 test("tells the user when a rate-limited request can be retried", async () => {
@@ -102,6 +142,31 @@ test("parses streamed answer events", async () => {
   const result = await createClient().sendMessage("hello", [], (event) => events.push(event.type));
   assert.equal(result.answer, "Hello there");
   assert.deepEqual(events, ["status", "token", "complete"]);
+});
+
+test("cancels an in-flight request without treating it as an inactivity timeout", async () => {
+  global.fetch = async (_input, init) => new Promise((_resolve, reject) => {
+    if (init.signal.aborted) reject(new Error("aborted"));
+    else init.signal.addEventListener("abort", () => reject(new Error("aborted")), { once: true });
+  });
+  const controller = new AbortController();
+  const pending = createClient().sendMessage("long request", [], undefined, "chat", controller.signal);
+  controller.abort();
+  const result = await pending;
+  assert.equal(result.error, "SaMo request cancelled.");
+});
+
+test("sends coding mode to the portal", async () => {
+  let payload;
+  global.fetch = async (_input, init) => {
+    payload = JSON.parse(init.body);
+    return new Response('data: {"type":"complete","answer":"done"}\n\n', {
+      headers: { "content-type": "text/event-stream" },
+    });
+  };
+  const result = await createClient().sendMessage("fix this", [], undefined, "coding");
+  assert.equal(result.answer, "done");
+  assert.equal(payload.mode, "coding");
 });
 
 test("distinguishes malformed stream data from connection failures", async () => {

@@ -47,6 +47,7 @@ Module._load = function (request, ...rest) {
 };
 const agent = require("../out/workspaceAgent.js");
 Module._load = originalLoad;
+const { sha256Text } = require("../out/agentCore.js");
 
 test("apply then undo create, modify, delete; rejects escapes", async () => {
   const root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "samo-")));
@@ -59,9 +60,9 @@ test("apply then undo create, modify, delete; rejects escapes", async () => {
   assert.equal(fs.existsSync(path.join(root, "..", "evil.txt")), false);
 
   const ok = await agent.applyChanges(root, [
-    { path: "a.txt", action: "modify", edits: [{ find: "world", replace: "samo" }] },
+    { path: "a.txt", action: "modify", expectedHash: sha256Text("hello world"), edits: [{ find: "world", replace: "samo" }] },
     { path: "new/dir/b.txt", action: "create", content: "new" },
-    { path: "gone.txt", action: "delete" },
+    { path: "gone.txt", action: "delete", expectedHash: sha256Text("bye") },
   ], snap);
   assert.equal(ok.ok, true, JSON.stringify(ok));
   assert.equal(fs.readFileSync(path.join(root, "a.txt"), "utf8"), "hello samo");
@@ -79,7 +80,7 @@ test("undo refuses when the user edited the file afterwards", async () => {
   const root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "samo-")));
   fs.writeFileSync(path.join(root, "a.txt"), "one");
   const snap = { id: "2", root, files: [] };
-  await agent.applyChanges(root, [{ path: "a.txt", action: "modify", content: "two" }], snap);
+  await agent.applyChanges(root, [{ path: "a.txt", action: "modify", expectedHash: sha256Text("one"), content: "two" }], snap);
   fs.writeFileSync(path.join(root, "a.txt"), "user edit");
   const undo = await agent.undoSnapshot(snap);
   assert.equal(undo.ok, false);
@@ -89,8 +90,53 @@ test("undo refuses when the user edited the file afterwards", async () => {
 test("symlinks cannot escape the workspace", async () => {
   const root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "samo-")));
   const outside = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "outside-")));
+  fs.writeFileSync(path.join(outside, "secret.txt"), "outside secret");
   fs.symlinkSync(outside, path.join(root, "link"));
+  assert.equal(await agent.readWorkspaceText(root, "link/secret.txt", 100), undefined);
+  assert.equal(await agent.readWorkspaceTextWithHash(root, "link/secret.txt", 100), undefined);
   const res = await agent.applyChanges(root, [{ path: "link/x.txt", action: "create", content: "x" }], { id: "3", root, files: [] });
   assert.equal(res.ok, false);
   assert.equal(fs.existsSync(path.join(outside, "x.txt")), false);
+});
+
+test("modifications require a matching hash and failures leave the full change set unapplied", async () => {
+  const root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "samo-")));
+  fs.writeFileSync(path.join(root, "a.txt"), "one");
+  fs.writeFileSync(path.join(root, "b.txt"), "two");
+  const snap = { id: "4", root, files: [] };
+  const result = await agent.applyChanges(root, [
+    { path: "a.txt", action: "modify", expectedHash: sha256Text("one"), content: "changed" },
+    { path: "b.txt", action: "modify", expectedHash: sha256Text("stale"), content: "changed" },
+  ], snap);
+  assert.equal(result.ok, false);
+  assert.match(result.errors[0], /SHA-256 mismatch/);
+  assert.equal(fs.readFileSync(path.join(root, "a.txt"), "utf8"), "one");
+
+  const missingHash = await agent.applyChanges(root, [
+    { path: "a.txt", action: "modify", content: "changed" },
+  ], snap);
+  assert.equal(missingHash.ok, false);
+  assert.match(missingHash.errors[0], /expectedHash/);
+  assert.equal(fs.readFileSync(path.join(root, "a.txt"), "utf8"), "one");
+});
+
+test("write executor blocks protected files, lockfiles, and invalid create/modify actions", async () => {
+  const root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "samo-")));
+  fs.writeFileSync(path.join(root, "exists.txt"), "existing");
+  const snap = { id: "5", root, files: [] };
+  for (const pathName of [".env", ".env.production", ".git/config", "node_modules/pkg/index.js", "package-lock.json"]) {
+    const result = await agent.applyChanges(root, [
+      { path: pathName, action: "create", content: "unsafe" },
+    ], snap);
+    assert.equal(result.ok, false, pathName);
+  }
+  const existing = await agent.applyChanges(root, [
+    { path: "exists.txt", action: "create", content: "overwrite" },
+  ], snap);
+  assert.equal(existing.ok, false);
+  const missing = await agent.applyChanges(root, [
+    { path: "missing.txt", action: "modify", expectedHash: sha256Text(""), content: "new" },
+  ], snap);
+  assert.equal(missing.ok, false);
+  assert.equal(fs.readFileSync(path.join(root, "exists.txt"), "utf8"), "existing");
 });

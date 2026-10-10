@@ -32,7 +32,10 @@ function createVscode(state) {
       onDidChangeActiveTextEditor: (cb) => { state.activeEditorListener = cb; return { dispose() {} }; },
       onDidChangeTextEditorSelection: (cb) => { state.selectionListener = cb; return { dispose() {} }; },
       showInformationMessage: async (...args) => { state.infoMessages.push(args[0]); return state.confirm ? "Create PR" : undefined; },
-      showWarningMessage: async (m) => { state.warnings.push(m); },
+      showWarningMessage: async (m, ...options) => {
+        state.warnings.push(m);
+        return state.confirm ? options[options.length - 1] : undefined;
+      },
       showErrorMessage: async (m) => { state.errors.push(m); },
     },
     workspace: {

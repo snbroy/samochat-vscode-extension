@@ -1,15 +1,20 @@
 import * as vscode from "vscode";
 import * as fs from "node:fs/promises";
 import * as path from "node:path";
-import { execFile, spawn } from "node:child_process";
+import { execFile, spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
 import {
   FileChange,
+  RegressionStep,
   TestCommand,
   applyTextEdits,
+  buildRegressionPlan,
   detectTestCommand,
   isIgnoredPath,
+  isPackageManagerManagedFile,
+  isProtectedWritePath,
   matchEol,
   resolveInside,
+  sha256Text,
   slugify,
   tail,
 } from "./agentCore";
@@ -36,6 +41,7 @@ export interface TestRun {
   label: string;
   passed: boolean;
   output: string;
+  fixAttempts?: number;
 }
 
 const b64 = (text: string): string => Buffer.from(text, "utf8").toString("base64");
@@ -101,12 +107,36 @@ export async function readWorkspaceText(root: string, rel: string, maxChars: num
     return undefined;
   }
   try {
+    await assertNoSymlinkEscape(root, absolute);
     const bytes = await vscode.workspace.fs.readFile(vscode.Uri.file(absolute));
     if (bytes.includes(0)) {
       return undefined;
     }
     const text = decoder.decode(bytes);
     return text.length > maxChars ? `${text.slice(0, maxChars)}\n/* ...truncated... */` : text;
+  } catch {
+    return undefined;
+  }
+}
+
+/** Read the exact document text and its hash for a later guarded write. */
+export async function readWorkspaceTextWithHash(
+  root: string,
+  rel: string,
+  maxChars: number,
+): Promise<{ content: string; sha256: string } | undefined> {
+  const absolute = resolveInside(root, rel);
+  if (!absolute) return undefined;
+  try {
+    await assertNoSymlinkEscape(root, absolute);
+    const uri = vscode.Uri.file(absolute);
+    const bytes = await vscode.workspace.fs.readFile(uri);
+    if (bytes.includes(0)) return undefined;
+    const text = (await vscode.workspace.openTextDocument(uri)).getText();
+    return {
+      content: text.length > maxChars ? `${text.slice(0, maxChars)}\n/* ...truncated... */` : text,
+      sha256: sha256Text(text),
+    };
   } catch {
     return undefined;
   }
@@ -164,6 +194,14 @@ export async function applyChanges(
   const pendingSnapshots: SnapshotFile[] = [];
 
   for (const change of changes) {
+    if (isProtectedWritePath(change.path)) {
+      errors.push(`${change.path}: protected paths (.git, node_modules, and .env files) cannot be changed.`);
+      continue;
+    }
+    if (isPackageManagerManagedFile(change.path)) {
+      errors.push(`${change.path}: package-manager lockfiles cannot be changed directly.`);
+      continue;
+    }
     const absolute = resolveInside(root, change.path);
     if (!absolute) {
       errors.push(`${change.path}: outside the workspace.`);
@@ -191,6 +229,25 @@ export async function applyChanges(
       document = await vscode.workspace.openTextDocument(uri);
     }
     const originalText = document?.getText();
+
+    if (change.action === "create" && stat) {
+      errors.push(`${change.path}: cannot create because the file already exists; use modify with its current SHA-256 instead.`);
+      continue;
+    }
+    if (change.action === "modify" && !stat) {
+      errors.push(`${change.path}: cannot modify because the file does not exist; use create instead.`);
+      continue;
+    }
+    if ((change.action === "modify" || change.action === "delete") && originalText !== undefined) {
+      if (!change.expectedHash) {
+        errors.push(`${change.path}: stale-write protection requires expectedHash from the file context. Re-read the file and retry.`);
+        continue;
+      }
+      if (sha256Text(originalText) !== change.expectedHash) {
+        errors.push(`${change.path}: the file changed after SaMo read it (SHA-256 mismatch). Re-read the latest file and regenerate this change.`);
+        continue;
+      }
+    }
 
     let nextText = "";
     if (change.action === "delete") {
@@ -223,7 +280,7 @@ export async function applyChanges(
       edit.replace(uri, fullRange(document), nextText);
       toSave.push(uri);
     } else {
-      edit.createFile(uri, { ignoreIfExists: true });
+      edit.createFile(uri, { ignoreIfExists: false });
       edit.insert(uri, new vscode.Position(0, 0), nextText);
       toSave.push(uri);
     }
@@ -232,6 +289,25 @@ export async function applyChanges(
 
   if (errors.length) {
     return { ok: false, errors };
+  }
+  for (const change of changes) {
+    const absolute = resolveInside(root, change.path);
+    if (!absolute) continue;
+    const uri = vscode.Uri.file(absolute);
+    if (change.action === "create") {
+      if (await statFile(uri)) {
+        return { ok: false, errors: [`${change.path}: a file appeared while SaMo was preparing the edit. No changes were applied; retry against the latest workspace.`] };
+      }
+      continue;
+    }
+    try {
+      const latest = await vscode.workspace.openTextDocument(uri);
+      if (sha256Text(latest.getText()) !== change.expectedHash) {
+        return { ok: false, errors: [`${change.path}: the file changed while SaMo was preparing the edit. No changes were applied; retry against the latest contents.`] };
+      }
+    } catch {
+      return { ok: false, errors: [`${change.path}: the file became unavailable while SaMo was preparing the edit. No changes were applied.`] };
+    }
   }
   if (!(await vscode.workspace.applyEdit(edit))) {
     return { ok: false, errors: ["VS Code rejected the workspace edit."] };
@@ -319,27 +395,57 @@ export async function resolveTestCommand(root: string, files: string[]): Promise
   return detectTestCommand(rootFiles, pkg);
 }
 
-export function runTests(root: string, command: TestCommand, timeoutMs = 180_000): Promise<TestRun> {
+export async function resolveRegressionPlan(root: string, files: string[]): Promise<RegressionStep[]> {
+  const rootFiles = new Set(files.filter((file) => !file.includes("/")));
+  const packageJson = rootFiles.has("package.json")
+    ? await readWorkspaceText(root, "package.json", 100_000)
+    : undefined;
+  return buildRegressionPlan(rootFiles, packageJson);
+}
+
+export function runTests(
+  root: string,
+  command: TestCommand,
+  timeoutMs = 180_000,
+  signal?: AbortSignal,
+): Promise<TestRun> {
   return new Promise((resolve) => {
     let output = "";
     let settled = false;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    let child: ChildProcessWithoutNullStreams;
+    let onAbort: () => void = () => undefined;
     const finish = (passed: boolean, extra = ""): void => {
       if (settled) {
         return;
       }
       settled = true;
       clearTimeout(timer);
+      signal?.removeEventListener("abort", onAbort);
       resolve({ label: command.label, passed, output: tail(`${output}${extra}`.replace(/\u001b\[[0-9;]*m/g, ""), 6000) });
     };
-    const child = spawn(command.command, command.args, {
+    if (signal?.aborted) {
+      finish(false, "\n[SaMo] Command cancelled.");
+      return;
+    }
+    child = spawn(command.command, command.args, {
       cwd: root,
       shell: process.platform === "win32",
       env: { ...process.env, CI: "true" },
     });
-    const timer = setTimeout(() => {
+    onAbort = (): void => {
+      child.kill();
+      finish(false, "\n[SaMo] Command cancelled.");
+    };
+    timer = setTimeout(() => {
       child.kill();
       finish(false, "\n[SaMo] Tests timed out.");
     }, timeoutMs);
+    signal?.addEventListener("abort", onAbort, { once: true });
+    if (signal?.aborted) {
+      onAbort();
+      return;
+    }
     child.stdout.on("data", (chunk) => { output += chunk; });
     child.stderr.on("data", (chunk) => { output += chunk; });
     child.on("error", (error) => finish(false, `\n[SaMo] Could not run tests: ${error.message}`));
@@ -353,6 +459,46 @@ function git(root: string, args: string[], command = "git"): Promise<{ ok: boole
       resolve({ ok: !error, out: `${stdout}${stderr}`.trim() });
     });
   });
+}
+
+export interface GitChangedFile {
+  path: string;
+  status: string;
+}
+
+export async function getGitChangedFiles(root: string): Promise<{ files: GitChangedFile[]; error?: string }> {
+  const status = await git(root, ["status", "--short", "--untracked-files=all"]);
+  if (!status.ok) return { files: [], error: "This workspace is not a Git repository." };
+  const files = status.out.split(/\r?\n/).filter(Boolean).map((line) => {
+    const statusCode = line.slice(0, 2).trim() || "??";
+    const listedPath = line.slice(3);
+    const path = listedPath.includes(" -> ") ? listedPath.slice(listedPath.lastIndexOf(" -> ") + 4) : listedPath;
+    return { path, status: statusCode };
+  });
+  return { files };
+}
+
+export async function getGitBranchStatus(root: string): Promise<{ status: string; error?: string }> {
+  const result = await git(root, ["status", "--short", "--branch"]);
+  return result.ok ? { status: result.out.slice(0, 12_000) } : { status: "", error: "This workspace is not a Git repository." };
+}
+
+export async function getRecentCommits(root: string): Promise<{ commits: string[]; error?: string }> {
+  const result = await git(root, ["log", "-5", "--format=%h%x09%s"]);
+  return result.ok
+    ? { commits: result.out.split(/\r?\n/).filter(Boolean).slice(0, 5) }
+    : { commits: [], error: "No recent Git commits are available in this workspace." };
+}
+
+export async function getFileDiff(root: string, relPath: string, maxChars = 12_000): Promise<{ diff: string; error?: string }> {
+  const absolute = resolveInside(root, relPath);
+  if (!absolute) return { diff: "", error: "The requested path must remain inside the workspace." };
+  const result = await git(root, ["diff", "HEAD", "--", relPath]);
+  if (!result.ok) return { diff: "", error: "Could not read the Git diff for this path." };
+  return {
+    diff: result.out.length > maxChars ? `${result.out.slice(0, maxChars)}\n...[diff truncated]` : result.out,
+    ...(!result.out.trim() ? { error: "No tracked Git diff was found for this path." } : {}),
+  };
 }
 
 export async function getGitDiff(root: string, maxChars = 60_000): Promise<{ diff: string; error?: string }> {
@@ -378,10 +524,52 @@ export async function getGitDiff(root: string, maxChars = 60_000): Promise<{ dif
 
 export async function createPullRequest(
   root: string,
-  options: { title: string; body: string; files?: string[] },
+  options: { title: string; body: string; files?: string[]; expectedFileHashes?: Record<string, string | null> },
 ): Promise<{ ok: boolean; message: string; url?: string; branch?: string }> {
   if (!(await git(root, ["rev-parse", "--is-inside-work-tree"])).ok) {
     return { ok: false, message: "This workspace is not a Git repository." };
+  }
+  if (options.files?.length) {
+    const allowed = new Set(options.files);
+    const staged = await git(root, ["diff", "--cached", "--name-only"]);
+    if (!staged.ok) return { ok: false, message: `Could not inspect staged changes: ${staged.out}` };
+    const unrelatedStaged = staged.out.split(/\r?\n/).filter((file) => file && !allowed.has(file));
+    if (unrelatedStaged.length) {
+      return {
+        ok: false,
+        message: `Refusing to commit unrelated staged changes. Keep or unstage these yourself, then retry: ${unrelatedStaged.join(", ")}`,
+      };
+    }
+    for (const file of options.files) {
+      const expectedHash = options.expectedFileHashes?.[file];
+      if (expectedHash === undefined) continue;
+      const absolute = resolveInside(root, file);
+      if (!absolute) return { ok: false, message: `Refusing to include a path outside the workspace: ${file}` };
+      try {
+        await assertNoSymlinkEscape(root, absolute);
+        const bytes = await fs.readFile(absolute);
+        if (expectedHash === null || sha256Text(decoder.decode(bytes)) !== expectedHash) {
+          return { ok: false, message: `${file} changed after SaMo edited it; refusing to include newer user changes.` };
+        }
+      } catch (error) {
+        if (expectedHash !== null && (error as NodeJS.ErrnoException).code === "ENOENT") {
+          return { ok: false, message: `${file} is missing after SaMo edited it; refusing to create the pull request.` };
+        }
+        if ((error as NodeJS.ErrnoException).code !== "ENOENT") {
+          return { ok: false, message: `Could not verify ${file} before creating the pull request: ${error instanceof Error ? error.message : "unknown path error"}` };
+        }
+      }
+      if (expectedHash === null) {
+        try {
+          await fs.access(absolute);
+          return { ok: false, message: `${file} reappeared after SaMo deleted it; refusing to include newer user changes.` };
+        } catch (error) {
+          if ((error as NodeJS.ErrnoException).code !== "ENOENT") {
+            return { ok: false, message: `Could not verify deleted path ${file}: ${error instanceof Error ? error.message : "unknown path error"}` };
+          }
+        }
+      }
+    }
   }
   const current = (await git(root, ["rev-parse", "--abbrev-ref", "HEAD"])).out;
   const protectedBranch = /^(main|master|develop|dev|trunk|HEAD)$/.test(current);
@@ -402,7 +590,9 @@ export async function createPullRequest(
   if (staged.ok) {
     return { ok: false, message: "There are no staged changes to commit.", branch };
   }
-  const committed = await git(root, ["commit", "-m", options.title]);
+  const committed = options.files?.length
+    ? await git(root, ["commit", "-m", options.title, "--only", "--", ...options.files])
+    : await git(root, ["commit", "-m", options.title]);
   if (!committed.ok) {
     return { ok: false, message: `git commit failed: ${committed.out}`, branch };
   }
